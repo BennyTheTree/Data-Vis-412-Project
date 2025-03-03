@@ -1,0 +1,57 @@
+---
+title: "Stock Market Dashboard"
+author: "Benjamin Kamelman, Theodor Hezkial, Anthony Adib"
+date: "2023-03-01"
+output: html_document
+runtime: shiny
+---
+
+```{r everything, echo=FALSE}
+# Load packages
+library(shiny)
+library(tidyverse)
+
+# 1) Manually create some stock market data
+my_data <- tibble(
+  Date = as.Date(c('2022-01-03','2022-01-04','2022-01-05','2022-01-06','2022-01-07',
+                   '2022-01-03','2022-01-04','2022-01-05','2022-01-06','2022-01-07')),
+  Ticker = rep(c("AAPL", "MSFT"), each = 5),
+  Open = c(150, 152, 151, 153, 155, 300, 305, 310, 308, 312),
+  High = c(152, 153, 152, 154, 157, 305, 310, 312, 309, 315),
+  Low = c(149, 150, 150, 151, 153, 298, 302, 307, 306, 310),
+  Close = c(151, 152, 151, 153, 156, 304, 308, 310, 308, 313),
+  Volume = c(1000000, 1100000, 1050000, 1150000, 1200000, 2000000, 2100000, 2050000, 2150000, 2200000)
+)
+
+# 2) Pivot the numeric columns into long format
+my_data_long <- my_data %>%
+  pivot_longer(
+    cols = c(Open, High, Low, Close, Volume),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+# 3) Create a dropdown menu for selecting a stock metric
+selectInput(
+  inputId = "metric_choice",
+  label = "Choose a stock metric:",
+  choices = unique(my_data_long$Metric)
+)
+
+# 4) Render a reactive plot based on the user's selection
+renderPlot({
+  req(input$metric_choice)
+  
+  filtered_data <- my_data_long %>%
+    filter(Metric == input$metric_choice)
+  
+  ggplot(filtered_data, aes(x = Date, y = Value, color = Ticker)) +
+    geom_line(size = 1) +
+    labs(
+      title = paste("Time Series of", input$metric_choice),
+      x = "Date",
+      y = input$metric_choice
+    ) +
+    theme_minimal()
+})
+```
