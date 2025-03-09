@@ -7,23 +7,27 @@ runtime: shiny
 ---
 
 ```{r everything, echo=FALSE}
-# Load packages
+# Load required packages
 library(shiny)
 library(tidyverse)
+library(tidyquant)  # For fetching real stock data
+library(DT)         # For data tables
 
-# 1) Manually create some stock market data
-my_data <- tibble(
-  Date = as.Date(c('2022-01-03','2022-01-04','2022-01-05','2022-01-06','2022-01-07',
-                   '2022-01-03','2022-01-04','2022-01-05','2022-01-06','2022-01-07')),
-  Ticker = rep(c("AAPL", "MSFT"), each = 5),
-  Open = c(150, 152, 151, 153, 155, 300, 305, 310, 308, 312),
-  High = c(152, 153, 152, 154, 157, 305, 310, 312, 309, 315),
-  Low = c(149, 150, 150, 151, 153, 298, 302, 307, 306, 310),
-  Close = c(151, 152, 151, 153, 156, 304, 308, 310, 308, 313),
-  Volume = c(1000000, 1100000, 1050000, 1150000, 1200000, 2000000, 2100000, 2050000, 2150000, 2200000)
-)
+# 1) Fetch real TSLA data from Yahoo Finance
+#    (Adjust the 'from'/'to' dates as needed)
+my_data <- tq_get("TSLA", from = "2023-01-01", to = "2023-02-01") %>%
+  rename(
+    Date = date,
+    Ticker = symbol,
+    Open = open,
+    High = high,
+    Low = low,
+    Close = close,
+    Volume = volume
+  )
 
-# 2) Pivot the numeric columns into long format
+# 2) Pivot the numeric columns into long format to satisfy the requirement.
+#    Now each row represents a date and a metric (e.g., Open, Close, etc.)
 my_data_long <- my_data %>%
   pivot_longer(
     cols = c(Open, High, Low, Close, Volume),
@@ -31,27 +35,127 @@ my_data_long <- my_data %>%
     values_to = "Value"
   )
 
-# 3) Create a dropdown menu for selecting a stock metric
-selectInput(
-  inputId = "metric_choice",
-  label = "Choose a stock metric:",
-  choices = unique(my_data_long$Metric)
+# 3) Build the Shiny UI using a dark-themed layout
+ui <- fluidPage(
+  # Custom CSS for dark theme
+  tags$head(
+    tags$style(HTML("
+      body { background-color: #1A1A1A; color: #FFFFFF; }
+      .well, .panel { background-color: #333333; border: none; }
+      .form-group, .control-label { color: #FFFFFF; }
+      h1, h2, h3, h4 { color: #FFFFFF; }
+      .table > tbody > tr > td { background-color: #333333; color: #FFFFFF; }
+    "))
+  ),
+  
+  # Top row: Header and symbol/price info (example text)
+  fluidRow(
+    column(12, h2("SYMBOL: TSLA $350.43", style = "color: #00CCFF;"), br())
+  ),
+  
+  # Row for metric selection
+  fluidRow(
+    column(12,
+           selectInput(
+             inputId = "metric_choice",
+             label = "Choose a stock metric:",
+             choices = unique(my_data_long$Metric)
+           )
+    )
+  ),
+  
+  # Next row: main line chart (using long format data) and volume chart (using original data)
+  fluidRow(
+    column(8,
+           plotOutput("mainPlot", height = "400px", width = "100%")
+    ),
+    column(4,
+           plotOutput("volumePlot", height = "400px", width = "100%")
+    )
+  ),
+  
+  # Final row: buy/sell table (mock data)
+  fluidRow(
+    column(12,
+           DTOutput("buySellTable")
+    )
+  )
 )
 
-# 4) Render a reactive plot based on the user's selection
-renderPlot({
-  req(input$metric_choice)
+# 4) Define the Server logic
+server <- function(input, output, session) {
   
-  filtered_data <- my_data_long %>%
-    filter(Metric == input$metric_choice)
+  # Main line chart using the pivoted (long format) data
+  output$mainPlot <- renderPlot({
+    req(input$metric_choice)
+    filtered_data <- my_data_long %>%
+      filter(Metric == input$metric_choice)
+    
+    ggplot(filtered_data, aes(x = Date, y = Value)) +
+      geom_line(color = ifelse(input$metric_choice == "Close", "#00CCFF", "white"), size = 1.2) +
+      labs(
+        title = paste(input$metric_choice, "Over Time"),
+        x = "Date",
+        y = input$metric_choice
+      ) +
+      theme_minimal(base_size = 14) +
+      theme(
+        plot.background = element_rect(fill = "#1A1A1A", color = NA),
+        panel.background = element_rect(fill = "#1A1A1A", color = "#444444"),
+        axis.text = element_text(color = "#FFFFFF"),
+        axis.title = element_text(color = "#FFFFFF"),
+        plot.title = element_text(color = "#FFFFFF", hjust = 0.5)
+      )
+  })
   
-  ggplot(filtered_data, aes(x = Date, y = Value, color = Ticker)) +
-    geom_line(size = 1) +
-    labs(
-      title = paste("Time Series of", input$metric_choice),
-      x = "Date",
-      y = input$metric_choice
-    ) +
-    theme_minimal()
-})
+  # Volume bar chart: use original data to show volume with color coding based on price movement
+  output$volumePlot <- renderPlot({
+    volume_data <- my_data %>%
+      mutate(UpDown = if_else(Close > Open, "Up", "Down"))
+    
+    ggplot(volume_data, aes(x = Date, y = Volume, fill = UpDown)) +
+      geom_col() +
+      scale_fill_manual(values = c("Up" = "green", "Down" = "red")) +
+      labs(
+        title = "Volume",
+        x = "Date",
+        y = "Volume"
+      ) +
+      theme_minimal(base_size = 14) +
+      theme(
+        plot.background = element_rect(fill = "#1A1A1A", color = NA),
+        panel.background = element_rect(fill = "#1A1A1A", color = "#444444"),
+        axis.text = element_text(color = "#FFFFFF"),
+        axis.title = element_text(color = "#FFFFFF"),
+        legend.position = "none",
+        plot.title = element_text(color = "#FFFFFF", hjust = 0.5)
+      )
+  })
+  
+  # Mock buy/sell table with color-coded "Side" column
+  buySellData <- tibble(
+    Side = rep(c("BUY", "SELL"), each = 5),
+    Qty = c(10, 20, 30, 40, 50, 10, 20, 30, 40, 50),
+    Price = c(seq(345, 349, length.out = 5), seq(350, 354, length.out = 5))
+  )
+  
+  output$buySellTable <- renderDT({
+    datatable(
+      buySellData,
+      options = list(dom = 't', pageLength = 10),
+      rownames = FALSE
+    ) %>%
+      formatStyle(
+        "Side",
+        backgroundColor = styleEqual(
+          c("BUY", "SELL"), 
+          c("green", "red")
+        ),
+        color = "white"
+      )
+  })
+}
+
+# 5) Run the Shiny App
+shinyApp(ui, server)
 ```
