@@ -13,9 +13,9 @@ library(tidyverse)
 library(tidyquant)  # For fetching real stock data
 library(DT)         # For data tables
 
-# 1) Fetch real TSLA data from Yahoo Finance
-#    (Adjust the 'from'/'to' dates as needed)
-my_data <- tq_get("TSLA", from = "2023-01-01", to = "2023-02-01") %>%
+# 1) Fetch real stock data from Yahoo Finance for multiple tickers
+tickers <- c("TSLA", "AAPL", "MSFT")
+my_data <- tq_get(tickers, from = "2023-01-01", to = "2023-02-01") %>%
   rename(
     Date = date,
     Ticker = symbol,
@@ -26,8 +26,7 @@ my_data <- tq_get("TSLA", from = "2023-01-01", to = "2023-02-01") %>%
     Volume = volume
   )
 
-# 2) Pivot the numeric columns into long format to satisfy the requirement.
-#    Now each row represents a date and a metric (e.g., Open, Close, etc.)
+# 2) Pivot the numeric columns into long format so each row represents a date and a metric
 my_data_long <- my_data %>%
   pivot_longer(
     cols = c(Open, High, Low, Close, Volume),
@@ -35,49 +34,93 @@ my_data_long <- my_data %>%
     values_to = "Value"
   )
 
-# 3) Build the Shiny UI using a dark-themed layout
+# 3) Build the Shiny UI with tabbed navigation and advanced styling
 ui <- fluidPage(
-  # Custom CSS for dark theme
+  # Custom CSS for dark theme and tab styling
   tags$head(
     tags$style(HTML("
-      body { background-color: #1A1A1A; color: #FFFFFF; }
+      body { background-color: #1A1A1A; color: #FFFFFF; font-family: 'Roboto', sans-serif; }
       .well, .panel { background-color: #333333; border: none; }
       .form-group, .control-label { color: #FFFFFF; }
       h1, h2, h3, h4 { color: #FFFFFF; }
       .table > tbody > tr > td { background-color: #333333; color: #FFFFFF; }
+      /* Style for tabset panel */
+      .nav-tabs > li > a { color: #FFFFFF; background-color: #444444; }
+      .nav-tabs > li.active > a { background-color: #00CCFF; color: #000000; }
+      .tab-content { padding: 20px; }
     "))
   ),
+  # Include a Google Font
+  tags$link(rel = "stylesheet", href = "https://fonts.googleapis.com/css?family=Roboto"),
   
-  # Top row: Header and symbol/price info (example text)
-  fluidRow(
-    column(12, h2("SYMBOL: TSLA $350.43", style = "color: #00CCFF;"), br())
-  ),
-  
-  # Row for metric selection
-  fluidRow(
-    column(12,
-           selectInput(
-             inputId = "metric_choice",
-             label = "Choose a stock metric:",
-             choices = unique(my_data_long$Metric)
-           )
-    )
-  ),
-  
-  # Next row: main line chart (using long format data) and volume chart (using original data)
-  fluidRow(
-    column(8,
-           plotOutput("mainPlot", height = "400px", width = "100%")
+  tabsetPanel(
+    tabPanel("Dashboard",
+      fluidRow(
+        column(12, h2("Stock Market Dashboard", style = "color: #00CCFF;"), br(),
+          p("Use the controls below to select a ticker, metric, and date range to explore the data.")
+        )
+      ),
+      fluidRow(
+        column(4,
+          selectInput(
+            inputId = "ticker_choice",
+            label = "Choose a ticker:",
+            choices = unique(my_data$Ticker)
+          )
+        ),
+        column(4,
+          selectInput(
+            inputId = "metric_choice",
+            label = "Choose a stock metric:",
+            choices = unique(my_data_long$Metric)
+          )
+        ),
+        column(4,
+          dateRangeInput(
+            inputId = "date_range",
+            label = "Select Date Range:",
+            start = min(my_data$Date),
+            end = max(my_data$Date),
+            min = min(my_data$Date),
+            max = max(my_data$Date)
+          )
+        )
+      ),
+      fluidRow(
+        column(8,
+          plotOutput("mainPlot", height = "400px", width = "100%")
+        ),
+        column(4,
+          plotOutput("volumePlot", height = "400px", width = "100%")
+        )
+      ),
+      fluidRow(
+        column(12,
+          h3("Summary Statistics"),
+          DTOutput("summaryTable")
+        )
+      ),
+      fluidRow(
+        column(12,
+          h3("Buy/Sell Table"),
+          DTOutput("buySellTable")
+        )
+      )
     ),
-    column(4,
-           plotOutput("volumePlot", height = "400px", width = "100%")
-    )
-  ),
-  
-  # Final row: buy/sell table (mock data)
-  fluidRow(
-    column(12,
-           DTOutput("buySellTable")
+    tabPanel("About",
+      fluidRow(
+        column(12,
+          h3("Purpose & Objective"),
+          p("This dashboard provides interactive insights into the performance of selected stock tickers. Users can select a ticker, choose a metric, and filter by date range to explore trends over time."),
+          h3("Statistical Analysis"),
+          p("The dashboard includes a time-series analysis of stock metrics and volume trends. Summary statistics (mean, median, min, max, standard deviation) are provided for the selected metric. The volume chart uses color coding (green for up days and red for down days) to indicate market behavior. Limitations include a fixed date range and the use of historical data."),
+          h3("Challenge & Goals"),
+          p("This project addresses the data dashboard challenge by creating an interactive, visually engaging tool for exploring stock market data. Our goal is to help investors and analysts gain clarity on market trends through dynamic visualizations."),
+          h3("Links"),
+          p("Challenge GitHub: ", a("https://github.com/UWB-Adv-Data-Vis-2025-Wi-A/data-challenge-nyc-311-stockmarket_data_dashboard", href = "https://github.com/UWB-Adv-Data-Vis-2025-Wi-A/data-challenge-nyc-311-stockmarket_data_dashboard", target="_blank")),
+          p("Team GitHub Repository: ", a("https://github.com/BennyTheTree/Data-Vis-412-Project", href = "https://github.com/BennyTheTree/Data-Vis-412-Project", target="_blank"))
+        )
+      )
     )
   )
 )
@@ -85,16 +128,33 @@ ui <- fluidPage(
 # 4) Define the Server logic
 server <- function(input, output, session) {
   
+  # Reactive dataset filtered by selected ticker and date range for original data
+  filtered_data <- reactive({
+    req(input$ticker_choice, input$date_range)
+    my_data %>% 
+      filter(Ticker == input$ticker_choice,
+             Date >= input$date_range[1],
+             Date <= input$date_range[2])
+  })
+  
+  # Reactive dataset filtered by selected ticker and date range for long-format data
+  filtered_data_long <- reactive({
+    req(input$ticker_choice, input$date_range)
+    my_data_long %>% 
+      filter(Ticker == input$ticker_choice,
+             Date >= input$date_range[1],
+             Date <= input$date_range[2])
+  })
+  
   # Main line chart using the pivoted (long format) data
   output$mainPlot <- renderPlot({
     req(input$metric_choice)
-    filtered_data <- my_data_long %>%
-      filter(Metric == input$metric_choice)
+    chart_data <- filtered_data_long() %>% filter(Metric == input$metric_choice)
     
-    ggplot(filtered_data, aes(x = Date, y = Value)) +
+    ggplot(chart_data, aes(x = Date, y = Value)) +
       geom_line(color = ifelse(input$metric_choice == "Close", "#00CCFF", "white"), size = 1.2) +
       labs(
-        title = paste(input$metric_choice, "Over Time"),
+        title = paste(input$ticker_choice, ":", input$metric_choice, "Over Time"),
         x = "Date",
         y = input$metric_choice
       ) +
@@ -108,16 +168,16 @@ server <- function(input, output, session) {
       )
   })
   
-  # Volume bar chart: use original data to show volume with color coding based on price movement
+  # Volume bar chart: uses original data to show volume with color coding based on price movement
   output$volumePlot <- renderPlot({
-    volume_data <- my_data %>%
+    vol_data <- filtered_data() %>%
       mutate(UpDown = if_else(Close > Open, "Up", "Down"))
     
-    ggplot(volume_data, aes(x = Date, y = Volume, fill = UpDown)) +
+    ggplot(vol_data, aes(x = Date, y = Volume, fill = UpDown)) +
       geom_col() +
       scale_fill_manual(values = c("Up" = "green", "Down" = "red")) +
       labs(
-        title = "Volume",
+        title = paste(input$ticker_choice, "Volume"),
         x = "Date",
         y = "Volume"
       ) +
@@ -130,6 +190,21 @@ server <- function(input, output, session) {
         legend.position = "none",
         plot.title = element_text(color = "#FFFFFF", hjust = 0.5)
       )
+  })
+  
+  # Summary statistics table for the selected metric
+  output$summaryTable <- renderDT({
+    req(input$metric_choice)
+    summary_data <- filtered_data_long() %>%
+      filter(Metric == input$metric_choice) %>%
+      summarise(
+        Mean = round(mean(Value, na.rm = TRUE), 2),
+        Median = round(median(Value, na.rm = TRUE), 2),
+        Min = round(min(Value, na.rm = TRUE), 2),
+        Max = round(max(Value, na.rm = TRUE), 2),
+        SD = round(sd(Value, na.rm = TRUE), 2)
+      )
+    datatable(summary_data, options = list(dom = 't'), rownames = FALSE)
   })
   
   # Mock buy/sell table with color-coded "Side" column
